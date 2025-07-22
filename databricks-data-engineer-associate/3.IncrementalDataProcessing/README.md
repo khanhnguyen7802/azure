@@ -65,13 +65,13 @@ customers_transformed_df.readStream
 
 ### Delta Transaction Log
 
-![alt text](image.png)
+![alt text](./img/image.png)
 
 Let's say, first we created a `Delta Table` in `Unity Catalog`, and it also creates a folder in Cloud Storage to store the **file** and the **transaction log**.
 
 Then, **Transaction 1 - Insert Data**, **Transaction 2 - Insert more data**, these transaction logs give Delta Lake the ability to offer ACID transactions as well as time travel capabilities.
 
-![alt text](image-1.png)
+![alt text](./img/image-1.png)
 
 ### Delta Lake Version History
 
@@ -216,7 +216,185 @@ VACUUM <table_name> RETAIN 1 HOURS; -- leave history for the last hour and delet
 
 ## Delta Live Table
 What is Delta Live Table?
-- A declarative ETL framework for building reliable, maintainable, and testable data processing pipelines. 
+- A **declarative** ETL framework for building reliable, maintainable, and testable data processing pipelines. 
 - You define the transformation to perform on your data and Delta Live Tables manage task orchestration, cluster management, monitoring, data quality and error handling. 
 
-![alt text](image-2.png)
+![alt text](./img/image-2.png)
+
+### Programming with DLT 
+![alt text](./img/image-3.png)
+
+```sql
+CREATE OR REFRESH Live Dataset
+[Data Quality Expectation]
+AS 
+  SELECT columns, transformations 
+  FROM source  
+```
+
+3 types of Live Dataset: 
+- `Streaming Tables`: Delta Table to which streams write data. Reads from EventHubs, Kafka, Cloud Files, ... Suitable for Incremental Data Ingestion; Allow DML operations; Massive amount of data  
+- `Materialized Views`: Delta Table created from the result of a query. Suitable for full refresh data ingestion workloads. NO DML operations allowed  
+- `Standard Views`: no physical storage of the data; scope limited to pipeline; cannot be published to Hive Metastore/Unity Catalog. Suitable for intermediate results to reduce complexity and enforce data quality constraints.  
+
+### DLT Pipelines and Notebooks 
+>Within a DLT notebook, it is NOT ALLOWED to mix different languages (e.g., you cannot have a cell in SQL then a cell in Python). So, **NO magic commands**.
+
+_Create **streaming table** (note that we *cannot provide a schema* here as schema is configured in DLT pipeline when we create it). We can only provide 1 schema in the pipeline for all the notebooks that are attached to that pipeline.
+```sql
+CREATE OR REFRESH STREAMING TABLE <table_name>
+COMMENT ''
+TBLPROPERTIES('quality'='bronze')
+AS 
+  SELECT ...
+  FROM cloud_files(
+    'path/to/file/data',
+    'json',
+    map('cloudFiles.inferColumnTypes', 'true')
+  );
+```
+In case when you're at the silve table and want to choose from bronze table, use LIVE (in the same pipeline), and `STREAM` modifier helps with only reading the latest data since the last execution (as a stream rather reading whole data, to load data incrementally):
+```sql 
+...
+  SELECT 
+  FROM STREAM(LIVE.bronze_table)
+```
+
+Implementation using **Python** syntax: 
+```python
+import dlt
+
+@dlt.table(
+    name = 'new_bronze_address',
+    comment = '',
+    table_properties = {'quality': 'bronze'}
+) # create a DLT dataset
+def bronze_address():
+  return(
+      spark.readStream # indicates streaming table, otherwise spark.read()
+              .format("cloudFiles")
+              .option("cloudFiles.format", "csv")
+              .option("cloudFiles.inferColumnTypes", "true")
+              .load("/path/to/files/being/read")
+  ) # return a dataframe
+```
+The name of the table will be the same as the function's name (i.e., `bronze_address`). In case you want different config, you can pass in additional args.
+
+
+
+**Reading data from a streaming Delta Table**:
+```python
+@dlt.table()
+
+def silver_address_clean():
+  return (
+    spark.readStream.table("LIVE.bronze_address") 
+  )
+```
+
+We can only execute that code block using `DLT pipeline`. Click `Workflow` on the left tab -> `Pipelines`-> `Create piplines` -> `ETL Pipeline`.
+
+For **Compute option**. in **Cluster mode**:
+- Enhanced autoscaling: optimize the cluster utilization by automatically allocating cluster resources based on your workload volume.
+- Fixed size: the size of the cluster is fixed
+
+In **Advanced option**, we config `pipelines.clusterShutdown.delay` to be 30m. 
+
+Then, after having done with the configs, we start the pipeline:
+- Default refresh mode: process the new data from an incremental source
+- Full refresh mode: reset all the checkpoint, delete all the data from the streaming tables and reprocess all the available data.
+
+
+_To add a new Notebook into the pipeline, go to `Setting` on top right, then `Add source code` -> choose the notebook.
+
+### DLT Expectations - Validating
+`Expectations` are applied for each of the record being processed. Expectation is basically just a conditional expression (e.g., id not null).
+
+```sql
+CONSTRAINT <expectation_name>
+  EXPECT (<conditional_expression>)
+  [ON VIOLATION (FAIL UPDATE | DROP ROW)]
+
+CONSTRAINT valid_customer_id
+EXPECT (customer_id IS NOT NULL)
+ON VIOLATION FAIL UPDATE
+```
+
+To add the data quality rules:
+```sql
+CREATE OR REFRESH STREAMING TABLE silver_customer_clean(
+  CONSTRAINT valid_customer_id EXPECT (customer_id IS NOT NULL) 
+    ON VIOLATION FAIL UPDATE -- fail the data flow 
+  CONSTRAINT valid_customer_name EXPECT (customer_name IS NOT NULL) 
+    ON VIOLATION DROP ROW  
+  CONSTRAINT valid_telephone EXPECT (LENGTH(telephone) >= 10) -- get a warning in case violation  
+)
+```
+
+Using Python:
+```python
+@dlt.expect("valid_customer_id", "customer_id IS NOT NULL")
+@dlt.expect_or_drop("valid_customer_name", "customer_name IS NOT NULL")
+@dlt.expect_or_fail("valid_telephone", "LENGTH(telephone) >= 10")
+
+valid_records = {
+                  "valid_customer_id": "customer_id IS NOT NULL",
+                  "valid_customer_name": "customer_name IS NOT NULL",
+                  "valid_telephone": "LENGTH(telephone) >= 10"
+                }
+@dlt.expect_all_or_drop(valid_records) # if any of them fail, the record will be dropped; also applies with similar decorators
+```
+
+### Type 1 SCD 
+It overwrites the data, which means that no history will be maintained.
+
+**Apply changes API** - check in docs for extensive options.
+```sql
+APPLY CHANGES INTO <target_table>
+FROM <src_table>
+KEYS <columns>
+SEQUENCE BY <columns>
+STORED AS <SCD TYPE 1 | SCD TYPE 2>
+
+APPLY CHANGES INTO LIVE.silver_customers
+FROM STREAM(LIVE.silver_customers_clean)
+KEYS(customer_id)
+SEQUENCE BY created_date
+STORED AS SCD TYPE 1;
+```
+
+### Type 2 SCD
+The records will have **start_date** and **end_date**, where the new updated record will be added with a new **start_date**.
+<br> -> We will have the full history of that record based on time.  
+
+**Using Python syntax with `create_streaming_table()` and `apply_changes()`**:
+```python
+dlt.create_streaming_table(
+    name = "silver_address",
+    comment = "SCD type 2 address table",
+    table_properties = {"quality": "silver"}
+)
+
+dlt.apply_changes(
+  target = "silver_address",
+  source = "silver_address_clean",
+  keys = ["customer_id"],
+  sequence_by = "created_date",
+  stored_as_scd_type = 2
+)
+```
+
+
+### Type 3 SCD
+Only the most recent change is tracked.
+
+## Lecgacy terminology
+|     |           New terminology           |      Legacy terminology       |
+| :-- | :--------------------------------:  | :---------------------------------: |
+|     |          Materialized View          |           LIVE table           |
+|     | CREATE OR REFRESH MATERIALIZED VIEW |  CREATE OR REFRESH LIVE TABLE   |
+|     | Streaming table |  Streaming LIVE table   |
+|     | CREATE OR REFRESH STREAMING TABLE   | CREATE OR REFRESH STREAMING LIVE TABLE | 
+|
+
+
