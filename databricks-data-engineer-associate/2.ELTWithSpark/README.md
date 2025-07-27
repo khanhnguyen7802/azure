@@ -235,7 +235,7 @@ RETURNS return_type
 RETURN expression; -- return value
 ```
 
-Example:
+Example in sql:
 ```sql
 CREATE OR REPLACE FUNCTION gizmobox.default.get_payment_status(payment_status INT)
 RETURNS STRING
@@ -247,6 +247,20 @@ RETURN CASE payment_status
   END;
 ```
 
+Example in Python:
+```python
+from pyspark.sql.types import IntegerType
+slen = udf(lambda s: len(s), IntegerType())
+
+@udf(returnType=IntegerType())
+def add_one(x):
+    if x is not None:
+        return x + 1
+
+df.select(slen("name").alias("total_len"), add_one("age")).show()
+```
+
+
 ## High order functions 
 ### Array functions (transform, filter, exists, aggregate)
 - syntax: `<function_name> (arr_column, lambda_expression)` where `lambda_expression = "element -> expression"`
@@ -257,3 +271,63 @@ RETURN CASE payment_status
 SELECT 
   TRANSFORM_VALUES(item_prices, (item, price) -> ROUND(price*1.1, 2)) AS prices_with_tax
 ```
+
+## Databricks Connect
+- A client library for the Databricks Runtime
+- Allows you to connect popular IDEs (e.g., VScode, Pycharm...)
+- Available for Python, R and Scala. 
+
+-> Using Databricks Connect (communicate via `DataFrame API`), you can write code using **Spark APIs** and run them **remotely on Databricks compute** (instead of local session).
+
+- For running code: All code runs locally, while all code involving DataFrame operations runs remotely with Databricks workspace and run responses are sent back to the local caller.
+
+- For debugging code: All code is debugged locally, while all Spark code continues to run remotely in Databricks workspace. The core Spark engine code cannot be debugged directly from the client.
+
+To configure connection, you must have:
+- Databricks Connect installed
+- A Databricks account and workspace that have Unity Catalog enabled
+- If using classic compute -> cluster access mode of **Assigned** or **Shared**
+
+### Connection with profiles (using Databricks CLI)
+- Step 1: install Databricks Connect. 
+```python
+pip show databricks-connect # check version
+
+pip install databricks-connect --upgrade
+```
+
+- Step 2: Auth login.
+```python
+databricks auth login --configure-cluster --host <workspace_url>
+
+# example
+databricks auth login --configure-cluster --host https://dbc-a1b2345c-d6e7.cloud.databricks.com
+```
+
+- Step 3: there will be a prompt to enter the **profile name**. Simply type in your desired profile name.
+
+- Step 4: choose the cluster 
+- Step 5: open the config file to modify
+```bash 
+vi .databrickscfg
+```
+In the .databrickscfg file, you will see all the profiles like below
+![alt text](image-1.png)
+
+- Step 6: in VScode editor (python file), execute the code block.
+```python
+from databricks.connect import DatabricksSession
+
+spark = DatabricksSession.builder.profile('stagging').getOrCreate()
+df=spark.table("<table_name>")
+df.show()
+```
+
+In case you want to switch to `serverless compute`
+```python 
+spark = DatabricksSession.builder.serverless(True).getOrCreate()
+```
+Or if you want the `serverless compute` to be default, go to `.databrickscfg` file, remove the `cluster_id` line and add this line: `serverless_compute_id=auto`. With that, when you run **DatabricksSession.builder.profile('stagging').getOrCreate()**, it will use the serverless compute.
+
+
+
