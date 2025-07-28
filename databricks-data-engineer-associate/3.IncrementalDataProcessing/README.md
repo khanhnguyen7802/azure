@@ -49,17 +49,46 @@ In order to find that, Spark then reads the `commit log`: if the batch id is in 
 Otherwise, Spark rereads the data from the start offset of the previous batch. Additionally, Spark also offers once guarantees -> avoid duplication.
 
 ### Auto Loader
+Auto Loader incrementally and efficiently processes new data files as they arrive in cloud storage without any additional setup. It provides a **Structured Streaming** source called `cloudFiles`.
 
-\_To use AutoLoader:
+AutoLoader reads files using **checkpoint**.
+
+\_To use AutoLoader for an easy ETL:
 
 ```python
-customers_transformed_df.readStream
-                        .format("cloudFiles")
-                        .option("cloudFiles.format", "json")
-                        .option("cloudFiles.useNotifications", "true") # cloud storage services (e.g., AWS, S3, ...)
-                        .schema(...)
-                        .load(...)
+spark.readStream.format("cloudFiles") \
+  .option("cloudFiles.format", "json") \ # mandatory
+  .option("cloudFiles.schemaLocation", checkpoint_path) \ # mandatory
+  .option("cloudFiles.inferColumnTypes", "true") \
+  .load("<path-to-source-data>") \
+  .writeStream \
+  .option("mergeSchema", "true") \
+  .option("checkpointLocation", "<path-to-checkpoint>") \
+  .start("<path_to_target")
 ```
+ By default, the schema is inferred as `string` types (JSON, csv, xml), any parsing errors (there should be none if everything remains as a string) will go to `_rescued_data`, and any new columns will fail the stream and evolve the schema.
+
+\_Use AutoLoader to load to a Unity Catalog managed table:
+```python
+checkpoint_path = "s3://dev-bucket/_checkpoint/dev_table"
+
+(spark.readStream
+  .format("cloudFiles")
+  .option("cloudFiles.format", "json")
+  .option("cloudFiles.schemaLocation", checkpoint_path)
+  .load("s3://autoloader-source/json-data")
+  .writeStream
+  .option("checkpointLocation", checkpoint_path)
+  .trigger(availableNow=True)
+  .toTable("dev_catalog.dev_database.dev_table"))
+```
+
+#### Schema evolution
+Auto Loader supports the following modes for schema evolution, which you set in the option `cloudFiles.schemaEvolutionMode`:
+- `addNewColumns` (default): Stream fails. New columns are added to the schema. Existing columns do not evolve data types.
+- `rescue`: Schema is never evolved and stream does not fail due to schema changes. All new columns are recorded in the `rescued data` column.
+- `failOnNewColumns`: Stream fails. Stream does not restart unless the provided schema is updated, or the offending data file is removed.
+- `none`: Does not evolve the schema, new columns are ignored, and data is not rescued unless the `rescuedDataColumn` option is set. Stream does not fail due to schema changes.
 
 ## Delta Lake
 
@@ -213,6 +242,75 @@ SET spark.databricks.delta.retentionDurationCheck.enabled = false; -- (optionall
 VACUUM <table_name> RETAIN 1 HOURS; -- leave history for the last hour and delete files before that
 ```
 
+### Deletion Vectors 
+> Problem: you have millions of records in parquet file, and you want to delete only one single row -> all the file has to be rewritten 
+<br> **Optimization solution:** enable table with `Deletion vector`.
+
+How it works is similar to flagging: you flag the row as deleted, and then when the parquet file is read, that flagged row will be skipped.
+
+Later on, when you run maintenance, (e.g., `OPTIMIZE` command or `REORG TABLE`), the parquet file will be rewritten and those marked rows will be removed. 
+
+```sql
+CREATE TABLE <table-name> [options] 
+TBLPROPERTIES ('delta.enableDeletionVectors' = true);
+
+ALTER TABLE <table-name> 
+SET TBLPROPERTIES ('delta.enableDeletionVectors' = true);
+```
+
+### Liquid Clustering (in Delta tables)
+This optimization is suitable when:
+- Tables with significant skew in data distribution 
+- Tables with access patterns that change over time 
+- Tables where a typical partition column could leave the table with too many or too few partitions. 
+
+To enable in SQL:
+```sql
+-- Create an empty Delta table
+CREATE TABLE table1(col0 INT, col1 string) CLUSTER BY (col0);
+
+-- Using a CTAS statement
+CREATE EXTERNAL TABLE table2 CLUSTER BY (col0)  -- specify clustering after table name, not in subquery
+LOCATION 'table_location'
+AS SELECT * FROM table1;
+
+-- Using a LIKE statement to copy configurations
+CREATE TABLE table3 LIKE table1;
+```
+
+To enable in Python:
+```python
+# Create an empty Delta table
+(DeltaTable.create()
+  .tableName("table1")
+  .addColumn("col0", dataType = "INT")
+  .addColumn("col1", dataType = "STRING")
+  .clusterBy("col0")
+  .execute())
+
+# Using a CTAS statement
+df = spark.read.table("table1")
+df.write.clusterBy("col0").saveAsTable("table2")
+
+# CTAS using DataFrameWriterV2
+df = spark.read.table("table1")
+df.writeTo("table1").using("delta").clusterBy("col0").create()
+```
+
+---
+To revert back to the simple table, you can:
+```sql
+ALTER TABLE <table_name>
+CLUSTER BY NONE
+```
+
+#### Difference between Liquid Clustering vs Zorder:
+- Liquid Clustering:
+  - only reorganizes parts of the data that aren't already clustered to make it more efficient. 
+  - ideal for scenarios with frequent updates
+- Z-Ordering
+  - reorganizes the entire table or partitions every time, which is more resource-intensive.
+  - suited for read-heavy workloads.
 
 ## Delta Live Table
 What is Delta Live Table?
