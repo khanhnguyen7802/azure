@@ -86,6 +86,7 @@ The data architecture used in Data Lakehouse is commonly referred to as **medall
 ## Databricks Architecture
 
 - Consists of 2 main parts:
+
   - Control plane: handles all the backend services required for the Databricks platform
     - **Web user interface**: where users interact
     - **Cluster manager**: responsible for managing and provisioning compute resources when users create/interact clusters to scale them up/down.
@@ -96,6 +97,8 @@ The data architecture used in Data Lakehouse is commonly referred to as **medall
     2. `Severless` compute: introduced in 2024. Databricks allocates resources from its pool of virtual machines already made available -> significantly reduces cluster startup time compared to classic compute, as the serverless model leverages the pre-allocated VMs within the Databricks subscription.
        ![alt text](./img/image-3.png)
 
+  > Worker node, driver node, dbfs are parts of the data plane, running in customer's cloud account
+
 ### Databricks Cluster
 
 #### Cluster types
@@ -105,14 +108,21 @@ The data architecture used in Data Lakehouse is commonly referred to as **medall
 
 - There are 2 types of clusters:
 
-|     |            All purpose             |             Job cluster             |
-| :-- | :--------------------------------: | :---------------------------------: |
-|     |          Created manually          |           Created by jobs           |
-|     |             Persistent             |  Terminated at the end of the job   |
-|     | Suitable for interactive workloads |  Suitable for automated workloads   |
-|     |      Shared among many users       | Isolated just for the job workloads |
-|     |          Expensive to run          |           Cheaper to run            |
-|     |    -> Interactive analysis work    |     -> Repeated production work     |
+|     |                   All purpose                    |             Job cluster             |
+| :-- | :----------------------------------------------: | :---------------------------------: |
+|     |          Created manually; Full control          |           Created by jobs           |
+|     | Persistent; always on unless terminated manually |  Terminated at the end of the job   |
+|     |        Suitable for interactive workloads        |  Suitable for automated workloads   |
+|     |             Shared among many users              | Isolated just for the job workloads |
+|     |                 Expensive to run                 |           Cheaper to run            |
+|     | -> Interactive analysis work, ML and development |     -> Repeated production work     |
+
+Additionally, we have **Serverless cluster** -> instant spin-up (hop on hop off) + you don't have to manage anything (you only pay for what you query) | suitable for data analytics, or quick query ...
+
+> For easy illustration: <br>
+> `all-purpose` is like your wife - all the cost is yours <br>
+> `job` is like holiday girlfriend - automatic ends when the work is done <br>
+> `serverless` is like a slut - the cost depends on how you use
 
 #### Cluster Configuration
 
@@ -121,8 +131,8 @@ The data architecture used in Data Lakehouse is commonly referred to as **medall
 - `Access mode`: there are 4 types
 
   - **Single user**: only allows **a single user** to access the cluster. Supports Python, SQL, Scala, R.
-  - **Shared**: multiple user access; provides process isolation -> each process gets its environment, so one cannot see the data nor credentials from the other.
-  - **No isolation shared**: also allows the Cluster to be shared amongst more than one user. Different from the `shared` mode is that this does not provide any process isolation, thus failure in one user's process may affect the others. <br>
+  - **Shared** (with Unity Catalog): multiple user access; provides process isolation -> each process gets its environment, so one cannot see the data nor credentials from the other.
+  - **No isolation shared** (no Unity Catalog): also allows the Cluster to be shared amongst more than one user. Different from the `shared` mode is that this does not provide any process isolation, thus failure in one user's process may affect the others. <br>
     Also, it does not offer any task preemption -> one running process may use up all the resources and the other may fail.
 
 - Runtime: the set of core libraries that run on Databricks Clusters. There are 4 types:
@@ -195,7 +205,7 @@ The data architecture used in Data Lakehouse is commonly referred to as **medall
   ```sql
   SELECT CURRENT_METASTORE()
   ```
--
+
 - If not, create a new user:
   - Navigate to Azure Portal -> Microsoft Entra ID -> `Mange` on the left tab -> `Users` -> `New user` -> `Create new user`
   - Fill in the information
@@ -220,7 +230,8 @@ The data architecture used in Data Lakehouse is commonly referred to as **medall
   ![alt text](./img/image-9.png)
 
 #### 4. Create storage credential
-- After having created the storage, you are likely not able to access due to *Invalid configuration value detected for fs.azure.account.key*. Therefore, you need to create `External location` to be able to access that container location.
+
+- After having created the storage, you are likely not able to access due to _Invalid configuration value detected for fs.azure.account.key_. Therefore, you need to create `External location` to be able to access that container location.
 
 ```sql
 CREATE EXTERNAL LOCATION IF NOT EXISTS <storageaccountname_containername>
