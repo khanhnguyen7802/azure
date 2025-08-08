@@ -53,6 +53,8 @@ Auto Loader incrementally and efficiently processes new data files as they arriv
 
 AutoLoader reads files using **checkpoint**.
 
+![alt text](./img/image-4.png)
+
 \_To use AutoLoader for an easy ETL:
 
 ```python
@@ -193,10 +195,13 @@ FROM <table_from_usa>
 <br> - **Create or replace** table: use when there are schema changes.
 
 ### Copy into and Merge 
-_Copy into (incrementally load new files from Cloud Storage into Delta table):
+_Copy into (incrementally load new files from Cloud Storage into Delta table). It can be considered as **lightweight auto loader**.
+<br> So basically, if we already executed the first `COPY INTO` with a specific folder, then after that, we add a new file and execute the code once again, only the new file is read.
+
+
 ```sql
 COPY INTO <table_name>
-FROM 'path/to/file'
+FROM 'path/to/file/or/folder'
 FILEFORMAT = JSON
 FORMAT_OPTIONS ('inferSchema' = 'true')
 COPY_OPTIONS ('mergeSchema' = 'true') -- if a new column is found, just add into the table
@@ -220,6 +225,11 @@ WHEN NOT MATCHED THEN
   INSERT (...) VALUES (...);
 
 ```
+
+#### COPY INTO vs AUTO LOADER
+- You want to load data from a file location that contains files in the order of **millions or higher**. `Auto Loader` can discover files more efficiently than the COPY INTO SQL command and can split file processing into multiple batches.
+
+- You do not plan to **load subsets of previously uploaded files**. With Auto Loader, it can be more difficult to reprocess subsets of files. However, you can use the `COPY INTO` SQL command to reload subsets of files while an Auto Loader stream is simultaneously running.
 
 ### Delta Lake Compaction
 _File compaction using `OPTIMIZE`: merge multiple small files into fewer, larger files. The history is still maintained. 
@@ -338,7 +348,7 @@ AS
 ### DLT Pipelines and Notebooks 
 >Within a DLT notebook, it is NOT ALLOWED to mix different languages (e.g., you cannot have a cell in SQL then a cell in Python). So, **NO magic commands**.
 
-_Create **streaming table** (note that we *cannot provide a schema* here as schema is configured in DLT pipeline when we create it). We can only provide 1 schema in the pipeline for all the notebooks that are attached to that pipeline.
+_Create **streaming table** for streaming operation (note that we *cannot provide a schema* here as schema is configured in DLT pipeline when we create it). We can only provide 1 schema in the pipeline for all the notebooks that are attached to that pipeline.
 ```sql
 CREATE OR REFRESH STREAMING TABLE <table_name>
 COMMENT ''
@@ -351,22 +361,17 @@ AS
     map('cloudFiles.inferColumnTypes', 'true')
   );
 ```
-In case when you're at the silve table and want to choose from bronze table, use LIVE (in the same pipeline), and `STREAM` modifier helps with only reading the latest data since the last execution (as a stream rather reading whole data, to load data incrementally):
-```sql 
-...
-  SELECT 
-  FROM STREAM(LIVE.bronze_table)
-```
 
 Implementation using **Python** syntax: 
 ```python
 import dlt
 
+# create a DLT dataset
 @dlt.table(
     name = 'new_bronze_address',
     comment = '',
-    table_properties = {'quality': 'bronze'}
-) # create a DLT dataset
+    table_properties = {'quality': 'bronze'} # a dict to define
+) 
 def bronze_address():
   return(
       spark.readStream # indicates streaming table, otherwise spark.read()
@@ -377,6 +382,39 @@ def bronze_address():
   ) # return a dataframe
 ```
 The name of the table will be the same as the function's name (i.e., `bronze_address`). In case you want different config, you can pass in additional args.
+
+---
+_Create a `MATERIAZLIZED VIEW` using Python:
+```python
+@dlt.table(
+  table_properties = {"quality": "bronze"},
+  commment = "customer bronze table",
+  name = "customer_bronze"
+)
+def cust_bronze():
+  return spark.read.table("dev.bronze.customer_raw")
+``` 
+
+---
+_Create a `VIEW` (temporary) using Python:
+```python
+@dlt.view(  
+  commment = "customer bronze table"
+)
+def joined_view():
+  df_c = spark.read.table("LIVE.customer_bronze")
+  df_o = spark.read.table("LIVE.order_bronze")
+  
+  return df_o.join(df_c, how="left_outer", on=df_c.id==df_o.id)
+``` 
+
+In case when you're at the silve table and want to choose from bronze table, use `LIVE` (in the same pipeline), and `STREAM` modifier helps with only reading the latest data since the last execution (as a stream rather reading whole data, to load data incrementally):
+```sql 
+...
+  SELECT 
+  FROM STREAM(LIVE.bronze_table)
+```
+
 
 
 
@@ -390,7 +428,10 @@ def silver_address_clean():
   )
 ```
 
-We can only execute that code block using `DLT pipeline`. Click `Workflow` on the left tab -> `Pipelines`-> `Create piplines` -> `ETL Pipeline`.
+We can only execute that code block using `DLT pipeline`. Click `Workflow` on the left tab -> `Pipelines`-> `Create piplines` -> `ETL Pipeline`. The product edition also varies:
+  - Core: can use dlt features
+  - Pro: you can CDC (change data capture), but cannot do data quality
+  - Advanced: everything
 
 For **Compute option**. in **Cluster mode**:
 - Enhanced autoscaling: optimize the cluster utilization by automatically allocating cluster resources based on your workload volume.
@@ -405,7 +446,18 @@ Then, after having done with the configs, we start the pipeline:
 
 _To add a new Notebook into the pipeline, go to `Setting` on top right, then `Add source code` -> choose the notebook.
 
-### DLT Expectations - Validating
+---
+#### DLT Pipeline mode
+- `Development`: allows the dlt cluster to run after execution (The compute resources don’t terminate when the pipeline is stopped)
+- `Production`: immediately kills the cluster after execution (either success/fail) (i.e., The compute resources terminate when the pipeline is stopped)
+
+#### Pipeline result overview
+![alt text](image.png)
+
+> **Note:** All datasets in DLT are backed by Delta Tables and are managed by DLT Pipelines. So, if you delete a DLT pipeline, all datasets of that pipeline will be dropped. 
+---
+
+### DLT Expectations - Validating (only streaming tables and materialized views)
 `Expectations` are applied for each of the record being processed. Expectation is basically just a conditional expression (e.g., id not null).
 
 ```sql
@@ -413,6 +465,7 @@ CONSTRAINT <expectation_name>
   EXPECT (<conditional_expression>)
   [ON VIOLATION (FAIL UPDATE | DROP ROW)]
 
+-- e.g., 
 CONSTRAINT valid_customer_id
 EXPECT (customer_id IS NOT NULL)
 ON VIOLATION FAIL UPDATE
@@ -429,7 +482,7 @@ CREATE OR REFRESH STREAMING TABLE silver_customer_clean(
 )
 ```
 
-Using Python:
+Using Python (only Python allows you to group multiple expectations using `expect_all`, `expect_all_or_drop`, and `expect_all_or_fail`):
 ```python
 @dlt.expect("valid_customer_id", "customer_id IS NOT NULL")
 @dlt.expect_or_drop("valid_customer_name", "customer_name IS NOT NULL")
@@ -442,6 +495,7 @@ valid_records = {
                 }
 @dlt.expect_all_or_drop(valid_records) # if any of them fail, the record will be dropped; also applies with similar decorators
 ```
+> For more info, refer to Databricks docs on [data validataion](https://docs.databricks.com/aws/en/dlt/expectations?language=Python).
 
 ### Type 1 SCD 
 It overwrites the data, which means that no history will be maintained.
