@@ -72,7 +72,7 @@ Tbh, idk what the exam wants to test here. Maybe ingesting data with Dataflows g
 
 ## Implement lifecycle management in Fabric
 ### Configure version control
-In Microsoft Fabric, version control means **connecting your workspace to Git**.
+In Microsoft Fabric, version control means **connecting your workspace to Git** *(workspace level)*.
 
 ![alt text](image-4.png)
 
@@ -88,8 +88,48 @@ Requires Admin, Member or Contributor access to the source of workspace, and per
 ![alt text](image-5.png)
 
 --
-- Implement database projects
-- Create and configure deployment pipelines
+### Implement database projects
+`SQL database project` is a local representation of SQL objects that comprise the schema for a single database, such as tables, stored procedures, or functions
+-> The development cycle can be integrated into CI/CD deployment workflows.
+
+The **development workflow** can be seen as follows: we clone the whole warehouse folder, then with help of extension "SQL Database Project" in VScode, we right click and choose `build`. The build only succeeds if there is no (syntax, logic, ...) error in the folder.  
+
+![alt text](image-6.png)
+
+> When deploying warehouse via Fabric deployment pipeline, there is no need to use and deal with database projects (the `dacpac`) since deployment pipeline will handle that in the background.
+
+After having built the warehouse locally, you can `publish` by adding a new profile using the **SQL connection string** from the warehouse on Fabric. 
+
+
+-- 
+
+### Create and configure deployment pipelines
+`Deployment pipeline` is a built-in tool in Fabric for managing content lifecycle. It can be used to deploy changes from one workspace/environment to another (kinda similar to Azure Data Factory). Can only grant an admin access to a deployment pipeline.
+
+![alt text](image-7.png)
+
+- Each block is called `stage` *(dev, test, prod)*.
+  - A `stage` represents one step in the content lifecycle. 
+  - Each stage is linked to different workspace. 
+  - Min 2 and max 10. 
+- `Item pairing`: Fabric matches items between stages (src and tgt) to know how specific item has changed. 
+  - Items are paired based on their unique internal IDs -> can identify whether an item is renamed or that's a new item
+  - Each item is given a status:
+    - **Same as source:** No changes to the item detected  
+    - **Different from source:** Item has changed in some way
+    - **Only in source:** Item is new and has not been deployed
+    - **Not in source:** Item doesn't exist in the source stage. Deployment will have no impact to these items.
+
+  > With deployment pipelines, you can choose and deploy the selected items (deploy everything is not necessary).
+
+  ![alt text](image-8.png)
+
+- `Deployment rules`: let you change settings like data sources or parameters when moving content between stages. This helps make sure each stage uses the right setup WITHOUT manual changes. E.g., without deployment rules, the `test workspace` might read from the lakehouse in the `dev workspace`.
+
+  ![alt text](image-9.png)
+  
+  > The table lists the type of items you can configure rules for, and the type of rule you can configure for each one. 
+<hr>
 
 ## Configure security and governance
 
