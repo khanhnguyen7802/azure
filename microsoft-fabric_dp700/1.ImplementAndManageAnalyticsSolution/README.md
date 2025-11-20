@@ -132,14 +132,160 @@ After having built the warehouse locally, you can `publish` by adding a new prof
 <hr>
 
 ## Configure security and governance
+Fabric hierarchy: 
+![alt text](image-10.png)
 
-- Implement workspace-level access controls
-- Implement item-level access controls
-- Implement row-level, column-level, object-level, and folder/file-level access controls
-- Implement dynamic data masking
-- Apply sensitivity labels to items
-- Endorse items
-- Implement and use workspace logging
+`The principle of Least Privilege`: give users the minimum level of access they need and nothing more.
+
+Fabric has **two layers**:
+  - **Control Plane** (Workspace Permissions)
+    - Who can access the workspace item (lakehouse, warehouse, etc.)
+    - Roles: Admin, Member, Contributor, Viewer
+    - Controls access to UI and metadata
+
+  - **Data Plane** (OneLake Security)
+    - Who can access data folders, files, tables
+    - Controls actual data read/write operations
+    - Applies across Spark, SQL Analytics Endpoint, shortcuts, etc.
+
+### Implement workspace-level access controls
+Corresponds to the role `Admin Monitoring Workspace`.
+
+![alt text](image-11.png)
+
+--
+
+### Implement item-level access controls
+Items by default (if not granted any other access) are `read-only` mode. 
+
+![alt text](image-12.png) 
+
+- For shared **Lakehouse**, people can open it and its SQL endpoint and read the default dataset. To allow them read directly in the Lakehouse, grant additional permissions:
+  - `Read all SQL endpoint data`: read access to all data exposed via T-SQL endpoint.
+  - `Read all Apache Spark and subscribe to events`: allow users to use Spark notebooks, jobs and access row-files in Lakehouse | grant access to raw files | enable event subscription
+  - `Build reports on the default semantic model`: allow use of datasets in PowerBI desktop or Fabric reports | does NOT grant direct table or file access
+
+- For shared `Warehouse`, people can connect to it. Additional permissions:
+  - `Read all data using SQL`
+  - `Read all OneLake data and subscribe to events`: grant access to OneLake filesystem behind the warehouse | subscribe to OneLake events generated for the warehouse
+  - `Build reports on semantic models`: similar to above
+  - `Monitor queries`: access dynamic management view (DMVs) and query insight views to monitor queries.
+  - `Share granted permissions`
+
+--
+### Implement row-level, column-level, object-level, and folder/file-level access controls
+`Object-level security (OLS)`: control access to individual objects like schemas, tables, views and files etc ... If the user doesn't have the permission, they do not even see the objects exist. 
+
+  - The `GRANT` statement is used to give a user or role permission to access specific objects. 
+
+  - The `DENY` statement is used to block explicit access to a database object. `DENY` overrides `GRANT`.
+  
+  - The `REVOKE` statement is used to **remove** a previously granted or denied permission (it does NOT grant or block directly).
+  
+  ![alt text](image-13.png)
+
+`Column-level security (CLS)`: control access to individual columns -> hide specific columns inside a table, e.g., hide salary or personal info column
+  ![alt text](image-14.png)
+
+`Row-level security (RLS)`: control access to individual rows -> determine which rows user can see, e.g., salesperson is only able to see rows related to sales region.
+![alt text](image-15.png)
+
+**Additional feature**: `OneLake Security` (file/folder access control)
+  - is the **data-plane** security model
+  - **role-based** access control 
+  - controls **who can read/write which files/folders/tables** in a lakehouse, warehouse, or shortcut — independently from workspace roles.  
+  - enforced consistently across engines (Spark, SQL, PowerBI)
+
+  > For example, if you had a lakehouse with customers insights; you could use OneLake security to share the data with your analyst team to build reports while removing rows or columns containing Personally Identifiable Information (PII) like names and addresses. This security then propagates automatically, so whether users access the lakehouse from Power BI or Spark or even Copilot, they only see what you’ve authorized.
+
+  Read more about OneLake Security: https://blog.fabric.microsoft.com/en-US/blog/onelake-security-is-now-available-in-public-preview/
+
+--
+### Implement dynamic data masking
+`Dynamic Data Masking`: is a built-in security feature in Microsoft Fabric, and can be used in Warehouse and Lakehouse SQL Endpoint. 
+
+The real data stays unchanged, and it is just masked -> **helps protect sensitive data by hiding it from non-privileged users** *(Administrative users or roles such as Admin, Member, or Contributor have CONTROL permission on the database … and can view unmasked data by default.")*.
+
+You can define `masking rules` for specific columns.
+
+- There are 4 types of `masking functions`:
+  - `Default masking function`
+    - replace entire value with a standard mask 
+    - no part of the original data shown up
+    - applied based on **column** type
+    - syntax: `default()`
+  
+    ![alt text](image-16.png)
+
+  - `Email masking function`
+    - designed to mask email addresses 
+    - shows the first character of the email and then masks the rest with XXX 
+    - syntax: `email()`
+
+    ![alt text](image-17.png)
+
+  - `Random masking function`
+    - replace numeric values with a random number 
+    - you define the min and max of the range 
+    - the value is generated dynamically (on the fly when queried) -> each query can return a different random number 
+    - syntax: `random(1, 1000)`
+
+    ![alt text](image-18.png)
+
+  - `Custom string masking function`
+    - allows you to control which parts of the string are visible 
+    - you define the starting/ending character and masking function
+    - syntax: `partial(1, "*****", 2)` -> keep 1 character at the start, mask the middle with "*****" and keep 2 characters at the end
+
+    ![alt text](image-19.png) 
+
+> Some examples adding and removing masking functions:
+
+  ![alt text](image-20.png)
+
+> Users with the `UNMASK` permission can view unmasked data even if they are not in a privileged role 
+![alt text](image-21.png)
+
+
+-- 
+### Apply sensitivity labels to items
+
+- **Configurable text labels** that you can add to Fabric items -> keep things organized and easy to find.
+- Enhance data categorization and discoverability
+- Only **Fabric admins** can create, rename, or delete tags
+- Users with `write permission` can apply and remove tags
+- Up to 10k tags can be created; each item can have up to 10 tags 
+
+![alt text](image-23.png)
+
+
+`Sentivity labels` help classify and protect Fabric items.
+  - can apply encryption, watermarking or usage restriction
+  - Fabric admins can enable in the admin portal
+  - specific licenses are needed to use sentivity labels
+  - users with write permission can apply and remove sentivity labels
+  
+  ![alt text](image-24.png)
+
+
+
+--
+### Endorse items
+The process of applying **an endorsement badge** to an item (like a report or semantic model) in Microsoft Fabric to **highlight its quality and trustworthiness**. We can only have 1 endorsement at a time.
+
+`Master data` can only be applied to data stores.
+
+![alt text](image-22.png)
+
+--
+### Implement and use workspace logging
+You can absolutely log all activities in your Fabric workspace.
+
+You can do this by add a monitoring `Eventhouse` *(need to enable monitoring from admin portal)*.
+
+![alt text](image-25.png)
+
+
 
 ## Orchestrate processes
 

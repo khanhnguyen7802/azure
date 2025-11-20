@@ -159,4 +159,9 @@ There are very specific syntax/code related questions, although not many. The le
 MS Learn helped me with a few questions. You will not get an index like the current documentation has. I would use the search bar to get to one topic and that topic in some cases had the link to the thing I was looking for. In some cases the search bar didn't return anything useful at all. I only started using while I was reviewing answers.
 
 ### 3. 
-Too many T-SQL questions 
+Too many T-SQL questions
+
+
+
+# Microsoft Fabric Structure 
+![alt text](image.png)
