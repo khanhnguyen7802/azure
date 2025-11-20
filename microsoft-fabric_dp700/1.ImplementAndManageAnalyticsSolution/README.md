@@ -104,7 +104,7 @@ After having built the warehouse locally, you can `publish` by adding a new prof
 -- 
 
 ### Create and configure deployment pipelines
-`Deployment pipeline` is a built-in tool in Fabric for managing content lifecycle. It can be used to deploy changes from one workspace/environment to another (kinda similar to Azure Data Factory). Can only grant an admin access to a deployment pipeline.
+`Deployment pipeline` is a built-in tool in Fabric for managing content lifecycle. It can be used to deploy changes from one workspace/environment to another. Can only grant an admin access to a deployment pipeline.
 
 ![alt text](image-7.png)
 
@@ -288,7 +288,63 @@ You can do this by add a monitoring `Eventhouse` *(need to enable monitoring fro
 
 
 ## Orchestrate processes
+### Choose between a pipeline and a notebook
+`Data Pipeline` is exactly similar to Azure Data Factory.
 
-- Choose between a pipeline and a notebook
-- Design and implement schedules and event-based triggers
-- Implement orchestration patterns with notebooks and pipelines, including parameters and dynamic expressions
+  - `Activities`: building blocks in data pipeline, divided into 3 groups
+    - `Data movement`
+    - `Data transformation`
+    - `Control`
+    ![alt text](image-26.png)
+    
+    - Can run and execute Fabric items (notebooks, dataflow, SQL and KQL scripts, etc ...)
+    - Can run **external services**, such as Web, Webhooks, Azure Databricks, ... 
+    - `COPY activity` is the primary mechanism to ingest data into Fabric 
+
+  - `Parameters`: help in dynamic pipeline
+  ![alt text](image-27.png)
+
+  - `Variables`: for inside the pipeline, while the parameter is for outside the pipeline
+
+  - `Scheduling`: runs pipeline on a set time interval, stat/end date, timezone configuration ...
+
+  ![alt text](image-29.png)
+
+`Notebook`: where you write code and execute.
+- Notebookutils: an integrated package in Fabric designed to streamline tasks (e.g., file system operations, environment variable access, ...). **Syntax:** *from notebookutils import notebook as nb*
+- File system utilities (**notebookutils.fs**): interact with file systems like ADLS and OneLake 
+- Notebook utilities (**notebookutils.notebook**): run notebooks, set exit values, ... 
+- Magic command: %%
+- Use **DAG** to run multiple notebooks
+![alt text](image-28.png)
+
+--
+### Design and implement schedules and event-based triggers
+- We have `Invoke Pipeline` to run another pipeline in your running pipeline. 
+
+- `Schedule trigger` in Fabric: execution of 
+  - Data pipelines
+  - Notebooks
+  - Dataflow Gen2
+
+- `Event-based trigger` (for Data Pipeline): Data Pipelines can now be triggered, based on Events in an Azure Blob Storage account, by click on the button `Add trigger`.
+  - In `Realtime Hub`: there are new options to trigger an Alert or Eventstream, based on some new events: job events, OneLake events, and Workspace item events.
+
+- `Triggering a Semantic Model Refresh`: auto refresh if using DirectLake, or configure a refresh schedule on your own, or use the Semantic Model Refresh activity in a Data Pipeline.
+
+- `Dataflow Gen2`: based on PowerQuery
+  - Supported destination: Fabric Lakehouse, Warehouse, SQL database, Data Explorer
+  - use **Power Query M** for transformations
+  - use a compute engine in Fabric to evaluate the query
+  - write results as: *Delta tables* in **Lakehouse/Warehouse**, OR *Parquet/delimited* files in **OneLake**
+  - can automatically convert Power Query output into Delta tables when loading into Lakehouse or Warehouse.
+
+-- 
+### Implement orchestration patterns with notebooks and pipelines, including parameters and dynamic expressions
+
+- `Buildi dynamic data pipelines`: for example, scan each table in a database and get its content.
+
+- We can also `orchestrate notebook` within notebook
+  - Use `dependencies` in DAG for predefined order. 
+  - Pros: Run multiple notebooks in the same **Spark session**, different from the pipeline where you'll have to spin up a new Spark cluster.
+
