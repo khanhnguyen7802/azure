@@ -166,6 +166,11 @@ MyTable
 ```
 | where Country in ("US", "UK")
 ```
+- `top`
+```sql
+raw_bikes
+| top 10 by ingestion_time() desc
+```
 
 - `summarize` *(similar to groupby)*: Produces a table that aggregates the content of the input table.
 ```
@@ -211,6 +216,36 @@ let Base = materialize(
 Base
 | summarize count() by Country
 ```
+
+- `create table`
+```sql
+.create table ExamScore(
+  student_id:guid,
+  exam_score:int
+)
+```
+
+- `ingest data` into table 
+```sql
+.ingest inline into table ExamScores <|
+8fc22-sda450-kjdn45, 10
+dlskdfjo89-325ksnd, 5
+```
+
+- `window function` in kql
+```sql
+row_number()
+rank()
+dense_rank()
+
+lag() -- return prev row value 
+lead() -- return the next row value 
+
+summarize by bin()
+
+```
+
+
 
 --
 ### Denormalize data
