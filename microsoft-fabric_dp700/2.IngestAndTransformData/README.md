@@ -57,6 +57,8 @@ From source: https://learn.microsoft.com/en-us/fabric/fundamentals/decision-guid
 
 ![alt text](image-3.png)
 
+Read more at: https://learn.microsoft.com/en-us/fabric/fundamentals/decision-guide-pipeline-dataflow-spark
+
 --
 
 ### Create and manage shortcuts to data
